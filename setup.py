@@ -1,30 +1,20 @@
+import os
 from setuptools import setup, find_packages
 from Cython.Build import cythonize
-import os
 import glob
+from os.path import isfile
 from os.path import join as pjoin
 from setuptools import setup
 from distutils.extension import Extension
 from distutils.command.build_ext import build_ext
 import subprocess
-import numpy as np
 import versioneer
+
+# BEGINNING of CUDA functions
+# *** Necessary for CUDA compilation ***
 
 # CUDA compilation is adapted from the source
 # https://github.com/rmcgibbo/npcuda-example
-
-# Versioneer allows us to automatically generate versioning from
-# our git tagging system which makes releases simpler.  
-versioneer.VCS = 'git'
-versioneer.versionfile_source = 'menpo/_version.py'
-versioneer.versionfile_build = 'menpo/_version.py'
-versioneer.tag_prefix = 'v'             # tags are like v1.2.0
-versioneer.parentdir_prefix = 'menpo-'  # dirname like 'menpo-v1.2.0'
-
-# ---- C/C++ EXTENSIONS ---- #
-cython_modules = ["menpo/shape/mesh/normals.pyx",
-                  "menpo/transform/piecewiseaffine/fastpwa.pyx",
-                  "menpo/image/feature/cppimagewindowiterator.pyx"]
 
 def find_in_path(name, path):
     """
@@ -69,31 +59,6 @@ def locate_cuda():
             raise EnvironmentError('The CUDA %s path could not be located in %s' % (k, v))
 
     return cudaconfig
-CUDA = locate_cuda()
-
-# Obtain the numpy include directory. This logic works across numpy versions.
-try:
-    numpy_include = np.get_include()
-except AttributeError:
-    numpy_include = np.get_numpy_include()
-
-# Build extensions
-cython_exts = list()
-for module in cython_modules:
-    module_path = '/'.join(module.split('/')[:-1])
-    module_sources_cpp = glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cpp"))
-    module_sources_cu = glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cu"))
-    
-    module_ext = Extension(module[:-4],
-        sources=module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module], # sources = cuda files + cpp files + pyx file (order seems important)
-        library_dirs=[CUDA['lib64']],
-        libraries=['cudart'],
-        language='c++',
-        runtime_library_dirs=[CUDA['lib64']],
-        extra_compile_args={'gcc': [],
-                            'nvcc': ['-arch=sm_20', '--ptxas-options=-v', '-c', '--compiler-options', "'-fPIC'"]},
-        include_dirs=[numpy_include, CUDA['include'], 'src'])
-    cython_exts.append(module_ext)
 
 def customize_compiler_for_nvcc(self):
     """
@@ -139,21 +104,58 @@ class custom_build_ext(build_ext):
         customize_compiler_for_nvcc(self.compiler)
         build_ext.build_extensions(self)
 
-setup(name='menpo',
-      version=versioneer.get_version(),
-      cmdclass={'build_ext': custom_build_ext},
-      zip_safe=False,
-      description='iBUG Facial Modelling Toolkit',
-      author='James Booth',
-      author_email='james.booth08@imperial.ac.uk',
-      include_dirs=[np.get_include()],
-      ext_modules=cythonize(cython_exts, quiet=True),
-      packages=find_packages(),
-      install_requires=[# Core
+# END of CUDA functions
+
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
+
+if on_rtd:
+    install_requires = []
+    ext_modules = []
+    include_dirs = []
+    cython_exts = []
+else:
+    import numpy as np
+
+    CUDA = locate_cuda()
+
+    # Obtain the numpy include directory. This logic works across numpy versions.
+    try:
+        numpy_include = np.get_include()
+    except AttributeError:
+        numpy_include = np.get_numpy_include()
+
+    # ---- C/C++ EXTENSIONS ---- #
+    cython_modules = ["menpo/shape/mesh/normals.pyx",
+                      "menpo/transform/piecewiseaffine/fastpwa.pyx",
+                      "menpo/image/feature/cppimagewindowiterator.pyx"]
+    
+    # Build extensions
+    cython_exts = list()
+    for module in cython_modules:
+        module_path = '/'.join(module.split('/')[:-1])
+        module_sources_cu = list() #glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cu"))
+        module_sources_cpp = glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cpp"))
+        #if isfile("%s.cpp" % module[:-4]):
+        #    module_sources_cpp.append("%s.cpp" % module[:-4])
+        #elif isfile("%s.c" % module[:-4]):
+        #    module_sources_cpp.append("%s.c" % module[:-4])
+        
+        module_ext = Extension(name=module[:-4],
+                               sources=module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module], # sources = cuda files + cpp files (order seems important)
+                               library_dirs=[CUDA['lib64']],
+                               libraries=['cudart'],
+                               language='c++',
+                               runtime_library_dirs=[CUDA['lib64']],
+                               extra_compile_args={'gcc': [],
+                                                   'nvcc': ['-arch=sm_20', '--ptxas-options=-v', '-c', '--compiler-options', "'-fPIC'"]},
+                               include_dirs=[numpy_include, CUDA['include'], 'src'])
+        cython_exts.append(module_ext)
+
+    #cython_exts = cythonize(cython_exts, quiet=True),
+    include_dirs = [numpy_include]
+    install_requires = [# Core
                         'numpy>=1.8.0',
-                        # we would like this to be 0.14.0, waiting for conda
-                        # support though (see menpo.math.multivariate)
-                        'scipy>=0.13.3',
+                        'scipy>=0.14.0',
                         'Cython>=0.20.1',
 
                         # Image
@@ -171,8 +173,28 @@ setup(name='menpo',
                         'cyrasterize>=0.1.5',
 
                         # Visualization
-                        'matplotlib>=1.2.1'],
+                        'matplotlib>=1.2.1',
+                        'mayavi>=4.3.0']
+
+# Versioneer allows us to automatically generate versioning from
+# our git tagging system which makes releases simpler.
+versioneer.VCS = 'git'
+versioneer.versionfile_source = 'menpo/_version.py'
+versioneer.versionfile_build = 'menpo/_version.py'
+versioneer.tag_prefix = 'v'  # tags are like v1.2.0
+versioneer.parentdir_prefix = 'menpo-'  # dirname like 'menpo-v1.2.0'
+
+setup(name='menpo',
+      version=versioneer.get_version(),
+      cmdclass={'build_ext': custom_build_ext},
+      zip_safe=False,
+      description='iBUG Facial Modelling Toolkit',
+      author='James Booth',
+      author_email='james.booth08@imperial.ac.uk',
+      include_dirs=include_dirs,
+      ext_modules=cythonize(cython_exts, quiet=True),
+      packages=find_packages(),
+      install_requires=install_requires,
       package_data={'menpo': ['data/*']},
-      tests_require=['nose>=1.3.0'],
-      extras_require={'3d': 'mayavi>=4.3.0'}
-      )
+      tests_require=['nose>=1.3.0', 'mock>=1.0.1']
+)

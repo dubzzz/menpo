@@ -35,18 +35,18 @@ def process_with_meshlabserver(file_path, output_dir=None, script_path=None,
     script_path : atring, optional
         If specified this script will be run on the input mesh.
 
-        Default: ``None``
+        Default: `None`
     output_dir : string, optional
         The output directory for the processed mesh.
 
         Default: The users tmp directory.
     output_filetype : string, optional
         The output filetype desired from meshlabserver. Takes the form of an
-        extension, eg ``obj``.
+        extension, eg `obj`.
 
         Default: The same as the input mesh
     export_flags : string, optional
-        Flags passed to the ``-om`` parameter. Allows for choosing
+        Flags passed to the `-om` parameter. Allows for choosing
         what aspects of the model will be exported (normals,
         texture coords etc)
     meshlab_command : string, optional
@@ -123,7 +123,7 @@ class MeshImporter(Importer):
         Returns
         --------
         relative_texture_path : string
-            The relative path to the texture or ``None`` if one can't be found
+            The relative path to the texture or `None` if one can't be found
         """
         # Stop searching every single time we access the property
         self.attempted_texture_search = True
@@ -141,9 +141,9 @@ class MeshImporter(Importer):
         Get the absolute path to the texture. Returns None if one can't be
         found. Makes it's best effort to find an appropriate texture by
         searching for textures with the same name as the mesh. Will only
-        search for the path the first time ``texture_path`` is invoked.
+        search for the path the first time `texture_path` is invoked.
 
-        Sets the ``self.relative_texture_path`` attribute.
+        Sets the `self.relative_texture_path` attribute.
 
         Returns
         -------
@@ -167,7 +167,7 @@ class MeshImporter(Importer):
         Abstract method that handles actually building a mesh. This involves
         reading the mesh from disk and doing any necessary parsing.
 
-        Should set the ``self.meshes`` attribute. Each mesh in ``self.meshes``
+        Should set the `self.meshes` attribute. Each mesh in `self.meshes`
         is expected to be an object with attributes:
 
         ======== ==========================
@@ -178,7 +178,7 @@ class MeshImporter(Importer):
         tcoords  double ndarray (optional)
         ======== ==========================
 
-        May also set the ``self.relative_texture_path`` if it is specified by
+        May also set the `self.relative_texture_path` if it is specified by
         the format.
         """
         pass
@@ -209,14 +209,15 @@ class MeshImporter(Importer):
         for mesh in self.meshes:
             if self.texture_importer is not None:
                 new_mesh = TexturedTriMesh(mesh.points.astype(np.float64),
-                                           mesh.trilist,
                                            mesh.tcoords,
-                                           self.texture_importer.build())
+                                           self.texture_importer.build(),
+                                           trilist=mesh.trilist)
             elif mesh.colour_per_vertex is not None:
-                new_mesh = ColouredTriMesh(mesh.points, mesh.trilist,
-                                           mesh.colour_per_vertex)
+                new_mesh = ColouredTriMesh(mesh.points,
+                                           colours=mesh.colour_per_vertex,
+                                           trilist=mesh.trilist)
             else:
-                new_mesh = TriMesh(mesh.points, mesh.trilist)
+                new_mesh = TriMesh(mesh.points, trilist=mesh.trilist)
 
             meshes.append(new_mesh)
         if len(meshes) == 1:
@@ -265,9 +266,9 @@ class WRLImporter(MeshImporter):
         Absolute filepath of the mesh.
     """
 
-    def __init__(self, filepath):
+    def __init__(self, filepath, texture=True):
         # Setup class before super class call
-        super(WRLImporter, self).__init__(filepath)
+        super(WRLImporter, self).__init__(filepath, texture=texture)
 
     def _parse_format(self):
         r"""
