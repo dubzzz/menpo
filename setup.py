@@ -135,10 +135,6 @@ else:
         module_path = '/'.join(module.split('/')[:-1])
         module_sources_cu = list() #glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cu"))
         module_sources_cpp = glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cpp"))
-        #if isfile("%s.cpp" % module[:-4]):
-        #    module_sources_cpp.append("%s.cpp" % module[:-4])
-        #elif isfile("%s.c" % module[:-4]):
-        #    module_sources_cpp.append("%s.c" % module[:-4])
         
         module_ext = Extension(name=module[:-4],
                                sources=module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module], # sources = cuda files + cpp files (order seems important)
