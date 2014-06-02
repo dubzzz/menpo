@@ -2,64 +2,12 @@ import os
 from setuptools import setup, find_packages
 from Cython.Build import cythonize
 import glob
-from os.path import isfile
-from os.path import join as pjoin
+from os.path import join
 from setuptools import setup
 from distutils.extension import Extension
 import subprocess
 import versioneer
-
-# BEGINNING of CUDA functions
-# *** Necessary for CUDA compilation ***
-
-# CUDA compilation is adapted from the source
-# https://github.com/rmcgibbo/npcuda-example
-
-def find_in_path(name, path):
-    """
-    Find a file in a search path
-    """
-    
-    #adapted fom http://code.activestate.com/recipes/52224-find-a-file-given-a-search-path/
-    for dir in path.split(os.pathsep):
-        binpath = pjoin(dir, name)
-        if os.path.exists(binpath):
-            return os.path.abspath(binpath)
-    return None
-
-def locate_cuda():
-    """
-    Locate the CUDA environment on the system
-    
-    Returns a dict with keys 'home', 'nvcc', 'include', and 'lib64'
-    and values giving the absolute path to each directory.
-    
-    Starts by looking for the CUDAHOME env variable. If not found, everything
-    is based on finding 'nvcc' in the PATH.
-    """
-    
-    # first check if the CUDAHOME env variable is in use
-    if 'CUDAHOME' in os.environ:
-        home = os.environ['CUDAHOME']
-        nvcc = pjoin(home, 'bin', 'nvcc')
-    else:
-        # otherwise, search the PATH for NVCC
-        nvcc = find_in_path('nvcc', os.environ['PATH'])
-        if nvcc is None:
-            raise EnvironmentError('The nvcc binary could not be '
-                'located in your $PATH. Either add it to your path, or set $CUDAHOME')
-        home = os.path.dirname(os.path.dirname(nvcc))
-
-    cudaconfig = {'home':home, 'nvcc':nvcc,
-                  'include': pjoin(home, 'include'),
-                  'lib64': pjoin(home, 'lib64')}
-    for k, v in cudaconfig.iteritems():
-        if not os.path.exists(v):
-            raise EnvironmentError('The CUDA %s path could not be located in %s' % (k, v))
-
-    return cudaconfig
-
-# END of CUDA functions
+from cuda_build_ext import locate_cuda
 
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
@@ -88,8 +36,8 @@ else:
     cython_exts = list()
     for module in cython_modules:
         module_path = '/'.join(module.split('/')[:-1])
-        module_sources_cu = list() #glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cu"))
-        module_sources_cpp = glob.glob(pjoin(pjoin(module_path, "cpp"), "*.cpp"))
+        module_sources_cu = glob.glob(join(join(module_path, "cpp"), "*.cu"))
+        module_sources_cpp = glob.glob(join(join(module_path, "cpp"), "*.cpp"))
         
         module_ext = Extension(name=module[:-4],
                                sources=module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module], # sources = cuda files + cpp files (order seems important)
