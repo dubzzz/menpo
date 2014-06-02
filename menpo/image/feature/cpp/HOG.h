@@ -14,11 +14,6 @@ const float pi = 3.1415926536;
 
 using namespace std;
 
-static inline double min(double x, double y) { return (x <= y ? x : y); }
-static inline double max(double x, double y) { return (x <= y ? y : x); }
-static inline int min(int x, int y) { return (x <= y ? x : y); }
-static inline int max(int x, int y) { return (x <= y ? y : x); }
-
 class HOG: public WindowFeature {
 public:
 	HOG(unsigned int windowHeight, unsigned int windowWidth,
