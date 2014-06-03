@@ -1,4 +1,5 @@
 #include "HOG.h"
+#include "CudaChecks.hpp"
 
 #define MAX_THREADS_1D 256
 #define MAX_THREADS_2D  16
@@ -420,12 +421,12 @@ void DalalTriggsHOGdescriptor(double *inputImage,
     const unsigned int factor_z_dim = h_dims.x * h_dims.y;
     const unsigned int factor_y_dim = h_dims.x;
     double *d_h;
-    cudaMalloc(&d_h, h_dims.x * h_dims.y * h_dims.z * sizeof(double));
-    cudaMemset(d_h, 0., h_dims.x * h_dims.y * h_dims.z * sizeof(double));
+    cudaErrorCheck(cudaMalloc(&d_h, h_dims.x * h_dims.y * h_dims.z * sizeof(double)));
+    cudaErrorCheck(cudaMemset(d_h, 0., h_dims.x * h_dims.y * h_dims.z * sizeof(double)));
     
     double *d_inputImage;
-    cudaMalloc(&d_inputImage, imageHeight * imageWidth * sizeof(double));
-    cudaMemcpy(d_inputImage, inputImage, imageHeight * imageWidth * sizeof(double), cudaMemcpyHostToDevice);
+    cudaErrorCheck(cudaMalloc(&d_inputImage, imageHeight * imageWidth * sizeof(double)));
+    cudaErrorCheck(cudaMemcpy(d_inputImage, inputImage, imageHeight * imageWidth * sizeof(double), cudaMemcpyHostToDevice));
     
     const dim3 dimBlock(MAX_THREADS_2D, MAX_THREADS_2D, 1);
     const dim3 dimGrid((imageWidth + dimBlock.x -1)/dimBlock.x, (imageHeight + dimBlock.y -1)/dimBlock.y, 1);
@@ -435,12 +436,15 @@ void DalalTriggsHOGdescriptor(double *inputImage,
                                                                  signedOrUnsignedGradientsBool ? 1 : 0 /*signedOrUnsignedGradients*/,
                                                                  (1 + (signedOrUnsignedGradientsBool ? 1 : 0)) * pi / numberOfOrientationBins /*binsSize*/);
     cudaThreadSynchronize(); // block until the device is finished
+    cudaError_t error = cudaGetLastError();
+    if(error != cudaSuccess)
+        cudaErrorRaise(error);
     
     double h[h_dims.x * h_dims.y * h_dims.z];
-    cudaMemcpy(h, d_h, h_dims.x * h_dims.y * h_dims.z * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaErrorCheck(cudaMemcpy(h, d_h, h_dims.x * h_dims.y * h_dims.z * sizeof(double), cudaMemcpyDeviceToHost));
     
-    cudaFree(d_h);
-    cudaFree(d_inputImage);
+    cudaErrorCheck(cudaFree(d_h));
+    cudaErrorCheck(cudaFree(d_inputImage));
     
     //Block normalization
     
@@ -479,13 +483,11 @@ void DalalTriggsHOGdescriptor(double *inputImage,
             blockNorm = sqrt(blockNorm);
             for (unsigned int i = 0; i < blockHeightAndWidthInCells; i++) {
                 for (unsigned int j = 0; j < blockHeightAndWidthInCells; j++) {
-                    for (unsigned int k = 0; k < numberOfOrientationBins; k++) {
+                    for (unsigned int k = 0; k < numberOfOrientationBins; k++, descriptorIndex++) {
                         if (blockNorm > 0)
-                            descriptorVector[descriptorIndex] =
-                                block[i][j][k] / blockNorm;
+                            descriptorVector[descriptorIndex] = block[i][j][k] / blockNorm;
                         else
                             descriptorVector[descriptorIndex] = 0.0;
-                        descriptorIndex++;
                     }
                 }
             }
