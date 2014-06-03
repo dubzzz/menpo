@@ -72,114 +72,154 @@ void HOG::apply(double *windowImage, double *descriptorVector) {
                                 this->numberOfChannels, descriptorVector);
 }
 
+__device__ double atomicAdd(double* address, double val) // http://stackoverflow.com/questions/16882253/cuda-atomicadd-produces-wrong-result
+{
+    unsigned long long int* address_as_ull = (unsigned long long int*) address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do
+    {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val + __longlong_as_double(assumed)));
+    }
+    while (assumed != old);
+    return __longlong_as_double(old);
+}
+
 // ZHU & RAMANAN: Face Detection, Pose Estimation and Landmark Localization
 //                in the Wild
+__global__ void kernel_image_ZhuRamananHOGdescriptor(double *d_hist,
+                                                     const dim3 visible,
+                                                     const dim3 blocks,
+                                                     const double *d_inputImage,
+                                                     const unsigned int imageHeight,
+                                                     const unsigned int imageWidth,
+                                                     const unsigned int numberOfChannels,
+                                                     const int cellHeightAndWidthInPixels)
+{
+    // Retrieve pixel position
+    int x = blockIdx.x * blockDim.x + threadIdx.x +1;
+    int y = blockIdx.y * blockDim.y + threadIdx.y +1;
+     
+    // Check if position is inside the image and not on borders
+    // full check: if (x < 1 || y < 1 || x >= visible.x -1 || y >= visible.y -1), but x>=1 and y>=1
+    if (x >= visible.x -1 || y >= visible.y -1)
+        return;
+    
+    // Usefull variables
+    // unit vectors used to compute gradient orientation
+    double uu[9] = {1.0000, 0.9397, 0.7660, 0.500, 0.1736, -0.1736, -0.5000, -0.7660, -0.9397};
+    double vv[9] = {0.0000, 0.3420, 0.6428, 0.8660, 0.9848, 0.9848, 0.8660, 0.6428, 0.3420};
+    
+    // compute gradient
+    // first channel
+    const double *s = d_inputImage + min(x, imageWidth-2) * imageHeight + min(y, imageHeight-2);
+    double dy = *(s + 1) - *(s - 1);
+    double dx = *(s + imageHeight) - *(s - imageHeight);
+    double v = dx * dx + dy * dy;
+    // rest of channels
+    for (unsigned int z = 1; z < numberOfChannels; z++)
+    {
+        s += imageHeight * imageWidth;
+        double dy2 = *(s + 1) - *(s - 1);
+        double dx2 = *(s + imageHeight) - *(s - imageHeight);
+        double v2 = dx2 * dx2 + dy2 * dy2;
+        // pick channel with strongest gradient
+        if (v2 > v) {
+            v = v2;
+            dx = dx2;
+            dy = dy2;
+        }
+    }
+
+    // snap to one of 18 orientations
+    double best_dot = 0;
+    int best_o = 0;
+    for (int o = 0; o < 9; o++)
+    {
+        double dot = uu[o] * dx + vv[o] * dy;
+        if (dot > best_dot)
+        {
+            best_dot = dot;
+            best_o = o;
+        }
+        else if (-dot > best_dot)
+        {
+            best_dot = - dot;
+            best_o = o + 9;
+        }
+    }
+
+    // add to 4 histograms around pixel using linear interpolation
+    double xp = ((double) x + 0.5) / (double) cellHeightAndWidthInPixels - 0.5;
+    double yp = ((double) y + 0.5) / (double) cellHeightAndWidthInPixels - 0.5;
+    int ixp = (int) floor(xp);
+    int iyp = (int) floor(yp);
+    double vx0 = xp - ixp;
+    double vy0 = yp - iyp;
+    double vx1 = 1.0 - vx0;
+    double vy1 = 1.0 - vy0;
+    v = sqrt(v);
+
+    if (ixp >= 0 && iyp >= 0)
+        atomicAdd(&d_hist[ixp*blocks.x + iyp + best_o*blocks.x*blocks.y], vx1 * vy1 * v);
+
+    if (ixp+1 < blocks.y && iyp >= 0)
+        atomicAdd(&d_hist[(ixp+1)*blocks.x + iyp + best_o*blocks.x*blocks.y], vx0 * vy1 * v);
+
+    if (ixp >= 0 && iyp+1 < blocks.x)
+        atomicAdd(&d_hist[ixp*blocks.x + (iyp+1) + best_o*blocks.x*blocks.y], vx1 * vy0 * v);
+
+    if (ixp+1 < blocks.y && iyp+1 < blocks.x)
+        atomicAdd(&d_hist[(ixp+1)*blocks.x + (iyp+1) + best_o*blocks.x*blocks.y], vx0 * vy0 * v);
+}
+
 void ZhuRamananHOGdescriptor(double *inputImage,
                              int cellHeightAndWidthInPixels,
                              unsigned int imageHeight, unsigned int imageWidth,
                              unsigned int numberOfChannels,
-                             double *descriptorMatrix) {
-    // unit vectors used to compute gradient orientation
-    double uu[9] = {1.0000, 0.9397, 0.7660, 0.500, 0.1736, -0.1736, -0.5000,
-                    -0.7660, -0.9397};
-    double vv[9] = {0.0000, 0.3420, 0.6428, 0.8660, 0.9848, 0.9848, 0.8660,
-                    0.6428, 0.3420};
-    int x, y, o;
-
-    // memory for caching orientation histograms & their norms
-    int blocks[2];
-    blocks[0] = (int)round((double)imageHeight /
-                           (double)cellHeightAndWidthInPixels);
-    blocks[1] = (int)round((double)imageWidth /
-                           (double)cellHeightAndWidthInPixels);
-    double *hist = (double *)calloc(blocks[0] * blocks[1] * 18, sizeof(double));
-    double *norm = (double *)calloc(blocks[0] * blocks[1], sizeof(double));
-
+                             double *descriptorMatrix)
+{
+    // Compute histograms
+    // memory for caching orientation histograms
+    
+    dim3 blocks((int) round((double) imageHeight / (double) cellHeightAndWidthInPixels), (int) round((double) imageWidth / (double) cellHeightAndWidthInPixels), 0);
+    dim3 visible(blocks.x * cellHeightAndWidthInPixels, blocks.y * cellHeightAndWidthInPixels, 0);
+    double *d_hist;
+    cudaErrorCheck(cudaMalloc(&d_hist, blocks.x * blocks.y * 18 * sizeof(double)));
+    cudaErrorCheck(cudaMemset(d_hist, 0., blocks.x * blocks.y * 18 * sizeof(double)));
+    
+    double *d_inputImage;
+    cudaErrorCheck(cudaMalloc(&d_inputImage, imageHeight * imageWidth * sizeof(double)));
+    cudaErrorCheck(cudaMemcpy(d_inputImage, inputImage, imageHeight * imageWidth * sizeof(double), cudaMemcpyHostToDevice));
+    
+    const dim3 dimBlock(MAX_THREADS_2D, MAX_THREADS_2D, 1);
+    const dim3 dimGrid((visible.x -2 + dimBlock.x -1)/dimBlock.x, (visible.y -2 + dimBlock.y -1)/dimBlock.y, 1); // x in [1,visible.x -1] ; y in [1,visible.y -1]
+    kernel_image_ZhuRamananHOGdescriptor<<<dimGrid, dimBlock>>>(d_hist, visible, blocks,
+                                                                d_inputImage, imageHeight, imageWidth, numberOfChannels,
+                                                                cellHeightAndWidthInPixels);
+    cudaErrorCheck(cudaFree(d_inputImage));
+    
+    // memory for caching orientation histograms on cpu
+    double hist[blocks.x * blocks.y * 18];
+    cudaErrorCheck(cudaMemcpy(hist, d_hist, blocks.x * blocks.y * 18 * sizeof(double), cudaMemcpyDeviceToHost));
+    cudaErrorCheck(cudaFree(d_hist));
+    
+    // memory for caching orientation histograms norms
+    double *norm = (double *)calloc(blocks.x * blocks.y, sizeof(double));
+    
     // memory for HOG features
     int out[3];
-    out[0] = max(blocks[0]-2, 0);
-    out[1] = max(blocks[1]-2, 0);
+    out[0] = max(blocks.x-2, 0);
+    out[1] = max(blocks.y-2, 0);
     out[2] = 27+4;
 
-    int visible[2];
-    visible[0] = blocks[0] * cellHeightAndWidthInPixels;
-    visible[1] = blocks[1] * cellHeightAndWidthInPixels;
-
-    for (x = 1; x < visible[1] - 1; x++) {
-        for (y = 1; y < visible[0] - 1; y++) {
-            // compute gradient
-            // first channel
-            double *s = inputImage + min(x, imageWidth-2) * imageHeight +
-                        min(y, imageHeight-2);
-            double dy = *(s + 1) - *(s - 1);
-            double dx = *(s + imageHeight) - *(s - imageHeight);
-            double v = dx * dx + dy * dy;
-            // rest of channels
-            for (unsigned int z = 1; z < numberOfChannels; z++) {
-                s += imageHeight * imageWidth;
-                double dy2 = *(s + 1) - *(s - 1);
-                double dx2 = *(s + imageHeight) - *(s - imageHeight);
-                double v2 = dx2 * dx2 + dy2 * dy2;
-                // pick channel with strongest gradient
-                if (v2 > v) {
-                    v = v2;
-                    dx = dx2;
-                    dy = dy2;
-                }
-            }
-
-            // snap to one of 18 orientations
-            double best_dot = 0;
-            int best_o = 0;
-            for (o = 0; o < 9; o++) {
-                double dot = uu[o] * dx + vv[o] * dy;
-                if (dot > best_dot) {
-                    best_dot = dot;
-                    best_o = o;
-                }
-                else if (-dot > best_dot) {
-                    best_dot = - dot;
-                    best_o = o + 9;
-                }
-            }
-
-            // add to 4 histograms around pixel using linear interpolation
-            double xp = ((double)x + 0.5) /
-                        (double)cellHeightAndWidthInPixels - 0.5;
-            double yp = ((double)y + 0.5) /
-                        (double)cellHeightAndWidthInPixels - 0.5;
-            int ixp = (int)floor(xp);
-            int iyp = (int)floor(yp);
-            double vx0 = xp - ixp;
-            double vy0 = yp - iyp;
-            double vx1 = 1.0 - vx0;
-            double vy1 = 1.0 - vy0;
-            v = sqrt(v);
-
-            if (ixp >= 0 && iyp >= 0)
-                *(hist + ixp*blocks[0] + iyp + best_o*blocks[0]*blocks[1])
-                    += vx1 * vy1 * v;
-
-            if (ixp+1 < blocks[1] && iyp >= 0)
-                *(hist + (ixp+1)*blocks[0] + iyp + best_o*blocks[0]*blocks[1])
-                    += vx0 * vy1 * v;
-
-            if (ixp >= 0 && iyp+1 < blocks[0])
-                *(hist + ixp*blocks[0] + (iyp+1) + best_o*blocks[0]*blocks[1])
-                    += vx1 * vy0 * v;
-
-            if (ixp+1 < blocks[1] && iyp+1 < blocks[0])
-                *(hist + (ixp+1)*blocks[0] + (iyp+1) + best_o*blocks[0]*blocks[1])
-                    += vx0 * vy0 * v;
-        }
-    }
-
     // compute energy in each block by summing over orientations
+    
     for (int o = 0; o < 9; o++) {
-        double *src1 = hist + o * blocks[0] * blocks[1];
-        double *src2 = hist + (o + 9) * blocks[0] * blocks[1];
+        double *src1 = hist + o * blocks.x * blocks.y;
+        double *src2 = hist + (o + 9) * blocks.x * blocks.y;
         double *dst = norm;
-        double *end = norm + blocks[1] * blocks[0];
+        double *end = norm + blocks.y * blocks.x;
         while (dst < end) {
             *(dst++) += (*src1 + *src2) * (*src1 + *src2);
             src1++;
@@ -188,23 +228,24 @@ void ZhuRamananHOGdescriptor(double *inputImage,
     }
 
     // compute features
-    for (x = 0; x < out[1]; x++) {
-        for (y = 0; y < out[0]; y++) {
+    
+    for (int x = 0; x < out[1]; x++) {
+        for (int y = 0; y < out[0]; y++) {
             double *dst = descriptorMatrix + x * out[0] + y;
             double *src, *p, n1, n2, n3, n4;
 
-            p = norm + (x + 1) * blocks[0] + y + 1;
-            n1 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks[0]) +
-                            *(p + blocks[0] + 1) + eps);
-            p = norm + (x + 1) * blocks[0] + y;
-            n2 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks[0]) +
-                            *(p + blocks[0] + 1) + eps);
-            p = norm + x * blocks[0] + y + 1;
-            n3 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks[0]) +
-                            *(p + blocks[0] + 1) + eps);
-            p = norm + x * blocks[0] + y;
-            n4 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks[0]) +
-                            *(p + blocks[0] + 1) + eps);
+            p = norm + (x + 1) * blocks.x + y + 1;
+            n1 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks.x) +
+                            *(p + blocks.x + 1) + eps);
+            p = norm + (x + 1) * blocks.x + y;
+            n2 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks.x) +
+                            *(p + blocks.x + 1) + eps);
+            p = norm + x * blocks.x + y + 1;
+            n3 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks.x) +
+                            *(p + blocks.x + 1) + eps);
+            p = norm + x * blocks.x + y;
+            n4 = 1.0 / sqrt(*p + *(p + 1) + *(p + blocks.x) +
+                            *(p + blocks.x + 1) + eps);
 
             double t1 = 0;
             double t2 = 0;
@@ -212,7 +253,7 @@ void ZhuRamananHOGdescriptor(double *inputImage,
             double t4 = 0;
 
             // contrast-sensitive features
-            src = hist + (x + 1) * blocks[0] + (y + 1);
+            src = hist + (x + 1) * blocks.x + (y + 1);
             for (int o = 0; o < 18; o++) {
                 double h1 = min(*src * n1, 0.2);
                 double h2 = min(*src * n2, 0.2);
@@ -224,20 +265,20 @@ void ZhuRamananHOGdescriptor(double *inputImage,
                 t3 += h3;
                 t4 += h4;
                 dst += out[0] * out[1];
-                src += blocks[0] * blocks[1];
+                src += blocks.x * blocks.y;
             }
 
             // contrast-insensitive features
-            src = hist + (x + 1) * blocks[0] + (y + 1);
+            src = hist + (x + 1) * blocks.x + (y + 1);
             for (int o = 0; o < 9; o++) {
-                double sum = *src + *(src + 9 * blocks[0] * blocks[1]);
+                double sum = *src + *(src + 9 * blocks.x * blocks.y);
                 double h1 = min(sum * n1, 0.2);
                 double h2 = min(sum * n2, 0.2);
                 double h3 = min(sum * n3, 0.2);
                 double h4 = min(sum * n4, 0.2);
                 *dst = 0.5 * (h1 + h2 + h3 + h4);
                 dst += out[0] * out[1];
-                src += blocks[0] * blocks[1];
+                src += blocks.x * blocks.y;
             }
 
             // texture features
@@ -250,21 +291,7 @@ void ZhuRamananHOGdescriptor(double *inputImage,
             *dst = 0.2357 * t4;
         }
     }
-    free(hist);
     free(norm);
-}
-
-__device__ double atomicAdd(double* address, double val) // http://stackoverflow.com/questions/16882253/cuda-atomicadd-produces-wrong-result
-{
-    unsigned long long int* address_as_ull = (unsigned long long int*) address;
-    unsigned long long int old = *address_as_ull, assumed;
-    do
-    {
-        assumed = old;
-        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val + __longlong_as_double(assumed)));
-    }
-    while (assumed != old);
-    return __longlong_as_double(old);
 }
 
 __global__ void kernel_image_DalalTriggsHOGdescriptor(double *d_h,

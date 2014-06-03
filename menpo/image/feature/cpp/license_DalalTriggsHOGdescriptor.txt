@@ -1,4 +1,4 @@
-Function 'DalalTriggsHOGdescriptor' in HOG.cpp is adapted from
+Function 'DalalTriggsHOGdescriptor' in HOG.cpp is downloaded and adapted from
 http://www.mathworks.com/matlabcentral/fileexchange/33863-histograms-of-oriented-gradients
 
 Copyright (c) 2011, Leo

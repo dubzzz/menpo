@@ -1,4 +1,4 @@
-Function 'ZhuRamananHOGdescriptor' in HOG.cpp is downloaded from
+Function 'ZhuRamananHOGdescriptor' in HOG.cpp is downloaded and adapted from
 http://www.ics.uci.edu/~xzhu/face/
 
 Copyright (C) 2012 Xiangxin Zhu, Deva Ramanan
