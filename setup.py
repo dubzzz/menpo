@@ -33,21 +33,36 @@ else:
                       "menpo/image/feature/cppimagewindowiterator.pyx"]
     
     # Build extensions
+    if CUDA:
+        print("\n-- Compiling using NVCC --\n")
+    else:
+        print("\n-- Compiling using GCC --\n")
     cython_exts = list()
     for module in cython_modules:
         module_path = '/'.join(module.split('/')[:-1])
         module_sources_cu = glob.glob(join(join(module_path, "cpp"), "*.cu"))
         module_sources_cpp = glob.glob(join(join(module_path, "cpp"), "*.cpp"))
+        module_sources = module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module] # sources = cuda files + cpp files (order seems important)
         
-        module_ext = Extension(name=module[:-4],
-                               sources=module_sources_cu + [name for name in module_sources_cpp if not name.endswith("main.cpp")] + [module], # sources = cuda files + cpp files (order seems important)
-                               library_dirs=[CUDA['lib64']],
-                               libraries=['cudart'],
-                               language='c++',
-                               runtime_library_dirs=[CUDA['lib64']],
-                               extra_compile_args={'gcc': [],
-                                                   'nvcc': ['-arch=sm_20', '--ptxas-options=-v', '-c', '--compiler-options', "'-fPIC'"]},
-                               include_dirs=[numpy_include, CUDA['include'], 'src'])
+        if CUDA:
+            # module will be compiled using nvcc (CUDA-compiler)
+            module_ext = Extension(name=module[:-4],
+                sources=module_sources,
+                library_dirs=[CUDA['lib64']],
+                libraries=['cudart'],
+                language='c++',
+                runtime_library_dirs=[CUDA['lib64']],
+                extra_compile_args={'gcc': [],
+                               'nvcc': ['-arch=sm_20', '--ptxas-options=-v', '-c', '--compiler-options', "'-fPIC'"]},
+                include_dirs=[numpy_include, CUDA['include'], 'src'])
+        else:
+            # module will be compiled using gcc
+            module_ext = Extension(name=module[:-4],
+                sources=module_sources,
+                language='c++',
+                extra_compile_args={'gcc': []},
+                include_dirs=[numpy_include, 'src'])
+            
         cython_exts.append(module_ext)
 
     #cython_exts = cythonize(cython_exts, quiet=True),

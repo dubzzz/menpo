@@ -2,6 +2,8 @@
 
 #include "CudaChecks.hpp"
 
+#ifdef __CUDACC__
+
 void cudaAssert(const cudaError err, const char *file, const int line)
 {
     if(cudaSuccess != err)
@@ -10,4 +12,6 @@ void cudaAssert(const cudaError err, const char *file, const int line)
         exit(1);
     } 
 }
+
+#endif
 

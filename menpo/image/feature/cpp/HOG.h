@@ -14,6 +14,13 @@ const float pi = 3.1415926536;
 
 using namespace std;
 
+#ifndef __CUDACC__
+    static inline double min(double x, double y) { return (x <= y ? x : y); }
+    static inline double max(double x, double y) { return (x <= y ? y : x); }
+    static inline int min(int x, int y) { return (x <= y ? x : y); }
+    static inline int max(int x, int y) { return (x <= y ? y : x); }
+#endif
+
 class HOG: public WindowFeature {
 public:
 	HOG(unsigned int windowHeight, unsigned int windowWidth,
@@ -34,17 +41,3 @@ private:
     double l2normClipping;
 };
 
-void ZhuRamananHOGdescriptor(double *inputImage,
-                             int cellHeightAndWidthInPixels,
-                             unsigned int imageHeight, unsigned int imageWidth,
-                             unsigned int numberOfChannels,
-                             double *descriptorMatrix);
-void DalalTriggsHOGdescriptor(double *inputImage,
-                              unsigned int numberOfOrientationBins,
-                              unsigned int cellHeightAndWidthInPixels,
-                              unsigned int blockHeightAndWidthInCells,
-                              bool signedOrUnsignedGradientsBool,
-                              double l2normClipping, unsigned int imageHeight,
-                              unsigned int imageWidth,
-                              unsigned int numberOfChannels,
-                              double *descriptorVector);
