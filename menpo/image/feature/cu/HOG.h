@@ -66,6 +66,9 @@ void DalalTriggsHOGdescriptor(double *h,
 
 #ifdef __global__
 
+__global__ void HOG_precompute_gradientMagnitude(double *d_gradientMagnitude);
+__global__ void HOG_precompute_gradientOrientation(double *d_gradientOrientation);
+
 __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
                                                             const dim3 h_dims,
                                                             const unsigned int imageHeight,

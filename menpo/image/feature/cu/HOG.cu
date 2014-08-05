@@ -10,6 +10,13 @@
 #define MAX_THREADS_3DY       4
 #define MAX_THREADS_3DZ      16
 
+// Apply what as been explained in the paper:
+//      The Fastest Deformable Part Model for Object Detection
+// http://www.cbsr.ia.ac.cn/users/jjyan/Fastest_DPM.pdf
+double *d_gradientMagnitude = 0, *d_gradientOrientation = 0;
+texture<int2, 1, cudaReadModeElementType> t_gradientMagnitude;
+texture<int2, 1, cudaReadModeElementType> t_gradientOrientation;
+
 // Hardware does not support double precision
 // the technic is to used int2 instead
 //   int2 v = tex1Dfetch(t,i);
@@ -83,11 +90,33 @@ void HOG::applyOnImage(const ImageWindowIterator &iwi, const double *image,
                        double *outputImage, int *windowsCenters) {
     __CLOG__
     double *d_image = 0;
-    if (this->method == 1) {
-        const unsigned int imageHeight = iwi._imageHeight;
-        const unsigned int imageWidth = iwi._imageWidth;
-        const unsigned int numberOfChannels = iwi._numberOfChannels;
+    const unsigned int imageHeight = iwi._imageHeight;
+    const unsigned int imageWidth = iwi._imageWidth;
+    const unsigned int numberOfChannels = iwi._numberOfChannels;
+    
+    // Initializes t_gradientMagnitude
+    //         and t_gradientOrientation
+    // if it has not been done before
+    if (d_gradientMagnitude == 0 || d_gradientOrientation == 0) {
+        const dim3 dimGrid(511, 2, 1);
+        const dim3 dimBlock(1, 256, 1);
         
+        __START__
+        cudaErrorCheck_goto(cudaMalloc(&d_gradientMagnitude, 511*511 * sizeof(double)));
+        HOG_precompute_gradientMagnitude<<<dimGrid, dimBlock>>>(d_gradientMagnitude);
+        cudaErrorCheck_goto(cudaThreadSynchronize());
+        cudaErrorCheck_goto(cudaBindTexture(NULL, t_gradientMagnitude, d_gradientMagnitude, 511*511 * sizeof(double)));        
+        __STOP("@ Pre-compute gradientMagnitude @")
+        
+        __START__
+        cudaErrorCheck_goto(cudaMalloc(&d_gradientOrientation, 511*511 * sizeof(double)));
+        HOG_precompute_gradientOrientation<<<dimGrid, dimBlock>>>(d_gradientOrientation);
+        cudaErrorCheck_goto(cudaThreadSynchronize());
+        cudaErrorCheck_goto(cudaBindTexture(NULL, t_gradientOrientation, d_gradientOrientation, 511*511 * sizeof(double)));        
+        __STOP("@ Pre-compute gradientOrientation @")
+    }
+    
+    if (this->method == 1) {
         __START__
         cudaErrorCheck_goto(cudaMalloc(&d_image, imageHeight * imageWidth * numberOfChannels * sizeof(double)));
         cudaErrorCheck_goto(cudaMemcpy(d_image, image, imageHeight * imageWidth * numberOfChannels * sizeof(double), cudaMemcpyHostToDevice));
@@ -560,6 +589,24 @@ static __inline__ __device__ double fetch_double(texture<int2, 1, cudaReadModeEl
     return __hiloint2double(v.y, v.x);
 }
 
+__global__ void HOG_precompute_gradientMagnitude(double *d_gradientMagnitude) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x -255;
+    int y = blockIdx.y * blockDim.y + threadIdx.y -255;
+    if (x > 255 || y > 255)
+        return;
+    
+    d_gradientMagnitude[511*(x+255) + (y+255)] = sqrt((double)(x*x + y*y));
+}
+
+__global__ void HOG_precompute_gradientOrientation(double *d_gradientOrientation) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x -255;
+    int y = blockIdx.y * blockDim.y + threadIdx.y -255;
+    if (x > 255 || y > 255)
+        return;
+    
+    d_gradientOrientation[511*(x+255) + (y+255)] = atan2((double) y, (double) x);
+}
+
 #define getInImage(i,j,k) ((i+rowFrom<0 || i+rowFrom>imageHeight-1 || j+columnFrom<0 || j+columnFrom>imageWidth-1) ? 0. : fetch_double(t_image, (i+rowFrom) + imageHeight*((j+columnFrom) + imageWidth*k)))
 __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
                                                             const dim3 h_dims,
@@ -637,15 +684,15 @@ __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
     }
 
     // Choose dominant channel based on magnitude
-    double gradientMagnitude = sqrt(dx[0] * dx[0] + dy[0] * dy[0]);
-    double gradientOrientation = atan2(dy[0], dx[0]);
+    double gradientMagnitude = fetch_double(t_gradientMagnitude, 511*(dx[0]+255) + (dy[0]+255));
+    double gradientOrientation = fetch_double(t_gradientOrientation, 511*(dx[0]+255) + (dy[0]+255));
     if (numberOfChannels > 1) {
         double tempMagnitude = gradientMagnitude;
         for (unsigned int cli = 1 ; cli < numberOfChannels ; ++cli) {
-            tempMagnitude= sqrt(dx[cli] * dx[cli] + dy[cli] * dy[cli]);
+            tempMagnitude = fetch_double(t_gradientMagnitude, 511*(dx[cli]+255) + (dy[cli]+255));
             if (tempMagnitude > gradientMagnitude) {
                 gradientMagnitude = tempMagnitude;
-                gradientOrientation = atan2(dy[cli], dx[cli]);
+                gradientOrientation = fetch_double(t_gradientOrientation, 511*(dx[cli]+255) + (dy[cli]+255));
             }
         }
     }
