@@ -66,6 +66,11 @@ void DalalTriggsHOGdescriptor(double *h,
 
 #ifdef __global__
 
+__global__ void imageDoubleToInt(double *d_image, int *d_image_int,
+                                 const unsigned int imageHeight,
+                                 const unsigned int imageWidth,
+                                 const unsigned int numberOfChannels);
+
 __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
                                                             const dim3 h_dims,
                                                             const unsigned int imageHeight,

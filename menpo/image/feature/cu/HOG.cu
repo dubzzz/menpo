@@ -10,11 +10,7 @@
 #define MAX_THREADS_3DY       4
 #define MAX_THREADS_3DZ      16
 
-// Hardware does not support double precision
-// the technic is to used int2 instead
-//   int2 v = tex1Dfetch(t,i);
-//   __hiloint2double(v.y, v.x);
-texture<int2, 1, cudaReadModeElementType> t_image;
+texture<int, 1, cudaReadModeElementType> t_image;
 
 HOG::HOG(unsigned int windowHeight, unsigned int windowWidth,
          unsigned int numberOfChannels, unsigned int method,
@@ -83,19 +79,26 @@ void HOG::applyOnImage(const ImageWindowIterator &iwi, const double *image,
                        double *outputImage, int *windowsCenters) {
     __CLOG__
     double *d_image = 0;
+    int *d_image_int = 0;
     if (this->method == 1) {
         const unsigned int imageHeight = iwi._imageHeight;
         const unsigned int imageWidth = iwi._imageWidth;
         const unsigned int numberOfChannels = iwi._numberOfChannels;
+        const dim3 dimGrid(imageWidth, (imageHeight+MAX_THREADS_1D-1)/MAX_THREADS_1D, 1);
+        const dim3 dimBlock(1, MAX_THREADS_1D, 1);
         
         __START__
         cudaErrorCheck_goto(cudaMalloc(&d_image, imageHeight * imageWidth * numberOfChannels * sizeof(double)));
         cudaErrorCheck_goto(cudaMemcpy(d_image, image, imageHeight * imageWidth * numberOfChannels * sizeof(double), cudaMemcpyHostToDevice));
-        cudaErrorCheck_goto(cudaBindTexture(NULL, t_image, d_image, imageHeight * imageWidth * numberOfChannels * sizeof(double)));
+        cudaErrorCheck_goto(cudaMalloc(&d_image_int, imageHeight * imageWidth * numberOfChannels * sizeof(int)));
+        imageDoubleToInt<<<dimGrid, dimBlock>>>(d_image, d_image_int, imageHeight, imageWidth, numberOfChannels);
+        cudaErrorCheck_goto(cudaThreadSynchronize());
+        cudaErrorCheck_goto(cudaBindTexture(NULL, t_image, d_image_int, imageHeight * imageWidth * numberOfChannels * sizeof(double)));
         __STOP("@ Malloc & Memcpy for <image> @")
         this->DalalTriggsHOGdescriptorOnImage(iwi, outputImage, windowsCenters);
         __START__
         cudaErrorCheck_goto(cudaUnbindTexture(t_image));
+        cudaErrorCheck_goto(cudaFree(d_image_int));
         cudaErrorCheck_goto(cudaFree(d_image));
         d_image = 0;
         __STOP("@ Free for <image> @")
@@ -554,13 +557,22 @@ __device__ double atomicAdd(double* address, double val) {
     return __longlong_as_double(old);
 }
 
-// cf. https://devtalk.nvidia.com/default/topic/399816/double-texture-memory/
-static __inline__ __device__ double fetch_double(texture<int2, 1, cudaReadModeElementType> t, int i) {
-    int2 v = tex1Dfetch(t,i);
-    return __hiloint2double(v.y, v.x);
+__global__ void imageDoubleToInt(double *d_image, int *d_image_int,
+                                 const unsigned int imageHeight,
+                                 const unsigned int imageWidth,
+                                 const unsigned int numberOfChannels) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z;
+    
+    if (x >= imageWidth || y >= imageHeight || z >= numberOfChannels)
+        return;
+    
+    int index = y + imageHeight*(x + imageWidth*z);
+    d_image_int[index] = d_image[index];
 }
 
-#define getInImage(i,j,k) ((i+rowFrom<0 || i+rowFrom>imageHeight-1 || j+columnFrom<0 || j+columnFrom>imageWidth-1) ? 0. : fetch_double(t_image, (i+rowFrom) + imageHeight*((j+columnFrom) + imageWidth*k)))
+#define getInImage(i,j,k) ((i+rowFrom<0 || i+rowFrom>imageHeight-1 || j+columnFrom<0 || j+columnFrom>imageWidth-1) ? 0. : tex1Dfetch(t_image, (i+rowFrom) + imageHeight*((j+columnFrom) + imageWidth*k)))
 __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
                                                             const dim3 h_dims,
                                                             const unsigned int imageHeight,
