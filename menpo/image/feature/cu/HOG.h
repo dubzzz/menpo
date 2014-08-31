@@ -66,7 +66,7 @@ void DalalTriggsHOGdescriptor(double *h,
 
 #ifdef __global__
 
-__global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
+__global__ void DalalTriggsHOGdescriptor_compute_histograms(float *d_h,
                                                             const dim3 h_dims,
                                                             const unsigned int imageHeight,
                                                             const unsigned int imageWidth,
@@ -83,18 +83,18 @@ __global__ void DalalTriggsHOGdescriptor_compute_histograms(double *d_h,
                                                             const bool enablePadding,
                                                             const int windowStepVertical, const int windowStepHorizontal);
 
-__global__ void DalalTriggsHOGdescriptor_compute_blocknorm(double *d_blockNorm,
+__global__ void DalalTriggsHOGdescriptor_compute_blocknorm(float *d_blockNorm,
                                                            const dim3 blockNorm_dims,
-                                                           const double *d_h,
+                                                           const float *d_h,
                                                            const dim3 h_dims,
                                                            const unsigned int numberOfOrientationBins,
                                                            const unsigned int blockHeightAndWidthInCells,
                                                            const unsigned int numberOfWindowsVertically);
 
-__global__ void DalalTriggsHOGdescriptor_compute_block(double *d_block,
-                                                       const double *d_blockNorm,
+__global__ void DalalTriggsHOGdescriptor_compute_block(float *d_block,
+                                                       const float *d_blockNorm,
                                                        const dim3 blockNorm_dims,
-                                                       const double *d_h,
+                                                       const float *d_h,
                                                        const dim3 h_dims,
                                                        const unsigned int numberOfOrientationBins,
                                                        const unsigned int blockHeightAndWidthInCells,
@@ -102,16 +102,16 @@ __global__ void DalalTriggsHOGdescriptor_compute_block(double *d_block,
                                                        const unsigned int numberOfWindowsVertically,
                                                        const unsigned int block_size);
 
-__global__ void DalalTriggsHOGdescriptor_compute_blocknorm2(double *d_blockNorm,
+__global__ void DalalTriggsHOGdescriptor_compute_blocknorm2(float *d_blockNorm,
                                                             const dim3 blockNorm_dims,
-                                                            const double *d_block,
+                                                            const float *d_block,
                                                             const unsigned int numberOfOrientationBins,
                                                             const unsigned int blockHeightAndWidthInCells,
                                                             const unsigned int numberOfWindowsVertically);
 
 __global__ void DalalTriggsHOGdescriptor_compute_outputImage(double *d_outputImage,
-                                                             const double *d_block,
-                                                             const double *d_blockNorm,
+                                                             const float *d_block,
+                                                             const float *d_blockNorm,
                                                              const dim3 blockNorm_dims,
                                                              const unsigned int numberOfOrientationBins,
                                                              const unsigned int blockHeightAndWidthInCells,
